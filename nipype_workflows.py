@@ -183,11 +183,12 @@ def l1_contrast(spmmat, contrasts, workingdir='/data/nipypes', logging=False, au
     return wf
 
 
-def normalize(images, template, workingdir='/tmp/', logging=False, autorun=True, multiproc=True, keep_cache=False):
+def normalize(images, seg_file=None, template=None, workingdir='/tmp/', logging=False, autorun=True, multiproc=True, keep_cache=False):
     """
 
     :param images (mandatory): single image or list of Nifti images to be normalized
-    :param template (mandatory): template to which data should be normalized
+    :param seg_file (optional): seg-file from the normalization procedure
+    :param template (optional): template to which data should be normalized
     :param workingdir (optional, default='/tmp/'): nipype working directory
     :param logging (optional, default=False): boolean
     :param autorun (optional, default=True): run workflow
@@ -199,6 +200,9 @@ def normalize(images, template, workingdir='/tmp/', logging=False, autorun=True,
 
     if not isinstance(images, list):
         images = [images]
+
+    if template is not None and seg_file is not None:
+        raise('Either use a template file or a segmentation parameter file, but not both!')
 
     wf = pe.Workflow(name=os.path.basename(os.path.normpath(workingdir)))
     wf.config['execution'] = {'hash_method': 'content',  # 'timestamp' or 'content'
@@ -215,12 +219,15 @@ def normalize(images, template, workingdir='/tmp/', logging=False, autorun=True,
 
     nm = spm.Normalize()
     nm.inputs.source = images
-    nm.inputs.template = template
+    if seg_file is not None:
+        nm.inputs.parameter_file = seg_file
+    if template is not None:
+        nm.inputs.template = template
 
     # save data
     datasink = pe.Node(DataSink(base_directory=outputdir), name="datasink")
 
-    wf.connect([(nm, datasink, [('spm_mat_file', '@SPM')])])
+    wf.connect([(nm, datasink, [('normalized_source', '@norm')])])
 
     if autorun:
         if multiproc:
@@ -235,7 +242,6 @@ def normalize(images, template, workingdir='/tmp/', logging=False, autorun=True,
             wf.run('MultiProc')
         else:
             wf.run()
-        print('First level statistics saved to ' + outputdir)
         print("finished!")
 
     if not keep_cache:
