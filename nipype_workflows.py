@@ -207,7 +207,7 @@ def normalize_smooth(images, deformation=None, structural=None, smoothing=None, 
     if deformation is None and structural is None:
         raise ValueError('Either provide a deformation file or a structural image!')
     if smoothing is None and not save_normalized:
-        raise ValueError("Not generating smoothed files *and* not saving normalized files doesn't make sense")
+        raise ValueError("Not generating smoothed files *and* not saving normalized files doesn't make sense!")
 
     wf = pe.Workflow(name=os.path.basename(os.path.normpath(workingdir)))
     wf.config['execution'] = {'hash_method': 'content',  # 'timestamp' or 'content'
@@ -242,7 +242,7 @@ def normalize_smooth(images, deformation=None, structural=None, smoothing=None, 
 
     links = []
     if save_normalized:
-        links = [(nm, datasink, [('normalized_files', '@norm')])]
+        links.append((nm, datasink, [('normalized_files', '@norm')]))
     if structural is not None:
         links.append((nm, datasink, [('deformation_field', '@deform')]))
     if smoothing is not None:
