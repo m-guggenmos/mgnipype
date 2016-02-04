@@ -1,17 +1,15 @@
 import os
-# noinspection PyUnresolvedReferences
 from mgnipype import nipypes
 import nipype.pipeline.engine as pe
 from nipype.interfaces import spm
 from nipype.interfaces.io import DataSink
 import nipype.algorithms.modelgen as model
-from fnmatch import fnmatch
 import scipy.io as sio
 
 
 def l1_model_estimation(images, outputdir, conditions, timing_parameters, contrasts, rp=None, high_pass=128.,
                         concatenate_runs=False, workingdir='/data/nipypes', logging=False, autorun=False,
-                        multiproc=True, keep_cache=True):
+                        multiproc=True, keep_cache=False):
     """
 
     :param images (mandatory): list of Nifti objects
@@ -113,7 +111,7 @@ def l1_model_estimation(images, outputdir, conditions, timing_parameters, contra
     return wf
 
 def l1_contrast(spmmat, contrasts, workingdir='/data/nipypes', logging=False, autorun=False,
-                multiproc=True, keep_cache=True):
+                multiproc=True, keep_cache=False):
     """
 
     :param spmmat (mandatory): path to SPM.mat
@@ -183,12 +181,14 @@ def l1_contrast(spmmat, contrasts, workingdir='/data/nipypes', logging=False, au
     return wf
 
 
-def normalize(images, seg_file=None, template=None, workingdir='/tmp/', logging=False, autorun=True, multiproc=True, keep_cache=False):
+def normalize_smooth(images, deformation=None, structural=None, smoothing=None,
+                     workingdir='/tmp/nipype/', logging=False, autorun=True, multiproc=True, keep_cache=False):
     """
 
     :param images (mandatory): single image or list of Nifti images to be normalized
-    :param seg_file (optional): seg-file from the normalization procedure
-    :param template (optional): template to which data should be normalized
+    :param deformation (optional): deformation fields from the segmentation procedure
+    :param structural (optional): structural file from which to estimate deformation fields
+    :param smoothing (optional, default=None): smoothing kernel (None=no smoothing)
     :param workingdir (optional, default='/tmp/'): nipype working directory
     :param logging (optional, default=False): boolean
     :param autorun (optional, default=True): run workflow
@@ -201,8 +201,10 @@ def normalize(images, seg_file=None, template=None, workingdir='/tmp/', logging=
     if not isinstance(images, list):
         images = [images]
 
-    if template is not None and seg_file is not None:
-        raise('Either use a template file or a segmentation parameter file, but not both!')
+    if deformation is not None and structural is not None:
+        raise ValueError('Either provide a deformation file or a structural image, but not both!')
+    if deformation is None and structural is None:
+        raise ValueError('Either provide a deformation file or a structural image!')
 
     wf = pe.Workflow(name=os.path.basename(os.path.normpath(workingdir)))
     wf.config['execution'] = {'hash_method': 'content',  # 'timestamp' or 'content'
@@ -217,17 +219,31 @@ def normalize(images, seg_file=None, template=None, workingdir='/tmp/', logging=
                                 'log_to_file': 'True'}
     wf.base_dir = os.path.dirname(os.path.normpath(workingdir))
 
-    nm = spm.Normalize()
-    nm.inputs.source = images
-    if seg_file is not None:
-        nm.inputs.parameter_file = seg_file
-    if template is not None:
-        nm.inputs.template = template
+    nm = pe.Node(interface=spm.Normalize12(), name="normalize")
+    nm.inputs.apply_to_files = images
+    if deformation is not None:
+        nm.inputs.jobtype = 'write'
+        nm.inputs.deformation_file = deformation
+    if structural is not None:
+        nm.inputs.jobtype = 'estwrite'
+        nm.inputs.image_to_align = structural
+        nm.inputs.tpm = nipypes.TPM
+
+    if smoothing is not None:
+        smooth = pe.Node(interface=spm.Smooth(), name="smooth")
+        smooth.inputs.out_prefix = 's%g' % smoothing
+        smooth.inputs.fwhm = [smoothing, smoothing, smoothing]
 
     # save data
     datasink = pe.Node(DataSink(base_directory=outputdir), name="datasink")
 
-    wf.connect([(nm, datasink, [('normalized_source', '@norm')])])
+    links = [(nm, datasink, [('normalized_files', '@norm')])]
+    if structural is not None:
+        links.append((nm, datasink, [('deformation_field', '@deform')]))
+    if smoothing is not None:
+        links += [(nm, smooth, [('normalized_files', 'in_files')]),
+                  (smooth, datasink, [('smoothed_files', '@smooth')])]
+    wf.connect(links)
 
     if autorun:
         if multiproc:
@@ -246,14 +262,13 @@ def normalize(images, seg_file=None, template=None, workingdir='/tmp/', logging=
 
     if not keep_cache:
         import shutil
-
         shutil.rmtree(os.path.join(workingdir))
 
     return wf
 
 
 def l2_one_sample_ttest(images, outputdir, explicit_mask=False, effect_name='effect', workingdir='/data/nipypes',
-                        covariates=None, logging=False, autorun=False, multiproc=True, keep_cache=True):
+                        covariates=None, logging=False, autorun=False, multiproc=True, keep_cache=False):
     """
 
     :param images (mandatory): list of Nifti objects
@@ -361,7 +376,7 @@ def l2_one_sample_ttest(images, outputdir, explicit_mask=False, effect_name='eff
     return wf
 
 def l2_two_sample_ttest(images, labels, outputdir, group_names=('group 1', 'group 2'), workingdir='/data/nipypes',
-                        covariates=None, logging=False, autorun=False, multiproc=True, keep_cache=True):
+                        covariates=None, logging=False, autorun=False, multiproc=True, keep_cache=False):
     """
 
     :param images (mandatory): list of Nifti objects
