@@ -181,7 +181,7 @@ def l1_contrast(spmmat, contrasts, workingdir='/data/nipypes', logging=False, au
     return wf
 
 
-def normalize_smooth(images, deformation=None, structural=None, smoothing=None,
+def normalize_smooth(images, deformation=None, structural=None, smoothing=None, save_normalized=True,
                      workingdir='/tmp/nipype/', logging=False, autorun=True, multiproc=True, keep_cache=False):
     """
 
@@ -189,6 +189,7 @@ def normalize_smooth(images, deformation=None, structural=None, smoothing=None,
     :param deformation (optional): deformation fields from the segmentation procedure
     :param structural (optional): structural file from which to estimate deformation fields
     :param smoothing (optional, default=None): smoothing kernel (None=no smoothing)
+    :param save_normalized (optional, default=True): whether to save normalized images
     :param workingdir (optional, default='/tmp/'): nipype working directory
     :param logging (optional, default=False): boolean
     :param autorun (optional, default=True): run workflow
@@ -205,6 +206,8 @@ def normalize_smooth(images, deformation=None, structural=None, smoothing=None,
         raise ValueError('Either provide a deformation file or a structural image, but not both!')
     if deformation is None and structural is None:
         raise ValueError('Either provide a deformation file or a structural image!')
+    if smoothing is None and not save_normalized:
+        raise ValueError("Not generating smoothed files *and* not saving normalized files doesn't make sense")
 
     wf = pe.Workflow(name=os.path.basename(os.path.normpath(workingdir)))
     wf.config['execution'] = {'hash_method': 'content',  # 'timestamp' or 'content'
@@ -237,12 +240,14 @@ def normalize_smooth(images, deformation=None, structural=None, smoothing=None,
     # save data
     datasink = pe.Node(DataSink(base_directory=outputdir), name="datasink")
 
-    links = [(nm, datasink, [('normalized_files', '@norm')])]
+    links = []
+    if save_normalized:
+        links = [(nm, datasink, [('normalized_files', '@norm')])]
     if structural is not None:
         links.append((nm, datasink, [('deformation_field', '@deform')]))
     if smoothing is not None:
-        links += [(nm, smooth, [('normalized_files', 'in_files')]),
-                  (smooth, datasink, [('smoothed_files', '@smooth')])]
+        links.append((nm, smooth, [('normalized_files', 'in_files')]))
+        links.append((smooth, datasink, [('smoothed_files', '@smooth')]))
     wf.connect(links)
 
     if autorun:
