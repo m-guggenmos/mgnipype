@@ -2,7 +2,8 @@ import os
 from mgnipype import nipypes
 import nipype.pipeline.engine as pe
 from nipype.interfaces import spm
-from nipype.interfaces.io import DataSink
+from nipype.interfaces.io import DataSink, DataGrabber
+from nipype.interfaces.utility import IdentityInterface
 import nipype.algorithms.modelgen as model
 import scipy.io as sio
 
@@ -181,26 +182,49 @@ def l1_contrast(spmmat, contrasts, workingdir='/data/nipypes', logging=False, au
     return wf
 
 
-def normalize_smooth(images, deformation=None, structural=None, smoothing=None, save_normalized=True,
+
+def normalize_smooth(path_images, subjects=None, deformation=None, structural=None, smoothing=None, save_normalized=True,
                      workingdir='/tmp/nipype/', logging=False, autorun=True, multiproc=True, keep_cache=False):
     """
 
-    :param images (mandatory): single image or list of Nifti images to be normalized
-    :param deformation (optional): deformation fields from the segmentation procedure
-    :param structural (optional): structural file from which to estimate deformation fields
-    :param smoothing (optional, default=None): smoothing kernel (None=no smoothing)
-    :param save_normalized (optional, default=True): whether to save normalized images
-    :param workingdir (optional, default='/tmp/'): nipype working directory
-    :param logging (optional, default=False): boolean
-    :param autorun (optional, default=True): run workflow
-    :param multiproc (optional, default=True): whether to use multiple processors
-    :param keep_cache (optional, default=False): keep nipype cache
+    Args:
+        path_images (mandatory): a string that specifies the path to a Nifti image, a list of strings that specify the
+                                 path to a Nifti image, or a dict with fields 'dir' and 'template' if nipype's iterating
+                                 procedure is used. The value of 'dir' must then correspond to the base directory
+                                 containing the subject data and 'template' specifies the path after 'dir' that leads to
+                                 the individual subject data.
+        subjects (optional): if a list with subject id's is passed, nipype's iterating procedure is used. In this case,
+                             path_images and either deformation or structural must be a dict.
+        deformation (optional): path to an SPM deformation file or a dict with fields 'dir' and 'template'. If a dict is
+                                passed, nipype's iterating procedure is used. The value of 'dir' specifies the base
+                                directory containing the subject's anatomical data and 'template' specifies the path
+                                after dir that leads to the subject's individual deformation file.
+        structural (optional): path to a structural file or a dict with fields 'dir' and 'template'. If a dict is
+                               passed, nipype's iterating procedure is used. The value of 'dir' specifies the base
+                               directory containing the subject's anatomical data and 'template' specifies the path
+                               after dir that leads to the subject's individual structural file.
+        smoothing (optional): isotropic smoothing kernel in mm
+        save_normalized (optional): whether to save the normalized data (set to False, if a smoothing kernel is passed
+                                    and you wish to not keep the normalized files).
+        workingdir (optional): nipype's working directory
+        logging:
+        autorun:
+        multiproc:
+        keep_cache:
 
-    :return: instance of nipype.pipeline.engine.Workflow
+    Returns:
+
+        A nipype workflow structure.
+
     """
+    if not isinstance(path_images, list) and subjects is None:
+        path_images = [path_images]
 
-    if not isinstance(images, list):
-        images = [images]
+    if subjects is not None:
+        if not isinstance(path_images, dict):
+            raise ValueError('If variable subjects is defined, path images must be a dict.')
+
+        infosource, datasource, anatsource = _data_grabber(path_images, deformation, subjects)
 
     if deformation is not None and structural is not None:
         raise ValueError('Either provide a deformation file or a structural image, but not both!')
@@ -216,22 +240,31 @@ def normalize_smooth(images, deformation=None, structural=None, smoothing=None, 
                               'stop_on_first_crash': 'False',
                               'stop_on_first_rerun': 'False'}
 
-    outputdir = os.path.dirname(images[0])
+    if subjects is None:
+        outputdir = os.path.dirname(path_images[0])
+    else:
+        outputdir = path_images['dir']
+
     if logging:
         wf.config['logging'] = {'log_directory': outputdir,
                                 'log_to_file': 'True'}
     wf.base_dir = os.path.dirname(os.path.normpath(workingdir))
 
+    # normalization
     nm = pe.Node(interface=spm.Normalize12(), name="normalize")
-    nm.inputs.apply_to_files = images
+    if subjects is None:
+        nm.inputs.apply_to_files = path_images
     if deformation is not None:
         nm.inputs.jobtype = 'write'
-        nm.inputs.deformation_file = deformation
+        if subjects is None:
+            nm.inputs.deformation_file = deformation
     if structural is not None:
         nm.inputs.jobtype = 'estwrite'
-        nm.inputs.image_to_align = structural
+        if subjects is None:
+            nm.inputs.image_to_align = structural
         nm.inputs.tpm = nipypes.TPM
 
+    # smoothing
     if smoothing is not None:
         smooth = pe.Node(interface=spm.Smooth(), name="smooth")
         smooth.inputs.out_prefix = 's%g' % smoothing
@@ -239,8 +272,17 @@ def normalize_smooth(images, deformation=None, structural=None, smoothing=None, 
 
     # save data
     datasink = pe.Node(DataSink(base_directory=outputdir), name="datasink")
+    datasink.inputs.parameterization = False
 
     links = []
+    if subjects is not None:
+        links.append((infosource, datasource, [('subject_id', 'subject_id')]))
+        links.append((infosource, anatsource, [('subject_id', 'subject_id')]))
+        links.append((datasource, nm, [('data', 'apply_to_files')]))
+        if deformation is not None:
+            links.append((anatsource, nm, [('data', 'deformation_file')]))
+        elif structural is not None:
+            links.append((anatsource, nm, [('data', 'image_to_align')]))
     if save_normalized:
         links.append((nm, datasink, [('normalized_files', '@norm')]))
     if structural is not None:
@@ -249,6 +291,8 @@ def normalize_smooth(images, deformation=None, structural=None, smoothing=None, 
         links.append((nm, smooth, [('normalized_files', 'in_files')]))
         links.append((smooth, datasink, [('smoothed_files', '@smooth')]))
     wf.connect(links)
+
+    wf.write_graph(graph2use='colored', dotfilename='/home/matteo/graph.dot')
 
     if autorun:
         if multiproc:
@@ -270,6 +314,34 @@ def normalize_smooth(images, deformation=None, structural=None, smoothing=None, 
         shutil.rmtree(os.path.join(workingdir))
 
     return wf
+
+
+def _data_grabber(data_info, anat_info, subjects):
+
+    # Map field names to individual subject runs.
+    info = dict(data=[['subject_id']])
+
+    infosource = pe.Node(interface=IdentityInterface(fields=['subject_id']),
+                         name="infosource")
+    infosource.iterables = ('subject_id', subjects)
+    datasource = pe.Node(interface=DataGrabber(infields=['subject_id'], outfields=['data']),
+                         name='datasource')
+    datasource.inputs.base_directory = data_info['dir']
+    # datasource.inputs.template = 'searchlight_HR_HP_%02g_r10_seed0.nii'
+    datasource.inputs.template = data_info['template']
+    datasource.inputs.template_args = info
+    datasource.inputs.sort_filelist = True
+
+    anatsource = pe.Node(interface=DataGrabber(infields=['subject_id'], outfields=['data']),
+                         name='anatsource')
+    anatsource.inputs.base_directory = anat_info['dir']
+    # datasource.inputs.template = 'searchlight_HR_HP_%02g_r10_seed0.nii'
+    anatsource.inputs.template = anat_info['template']
+    anatsource.inputs.template_args = info
+    anatsource.inputs.sort_filelist = True
+
+    return infosource, datasource, anatsource
+
 
 
 def l2_one_sample_ttest(images, outputdir, explicit_mask=False, effect_name='effect', workingdir='/data/nipypes',
