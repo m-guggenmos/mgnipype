@@ -321,21 +321,17 @@ def _data_grabber(data_info, anat_info, subjects):
     # Map field names to individual subject runs.
     info = dict(data=[['subject_id']])
 
-    infosource = pe.Node(interface=IdentityInterface(fields=['subject_id']),
-                         name="infosource")
+    infosource = pe.Node(interface=IdentityInterface(fields=['subject_id']), name="infosource")
     infosource.iterables = ('subject_id', subjects)
-    datasource = pe.Node(interface=DataGrabber(infields=['subject_id'], outfields=['data']),
-                         name='datasource')
+
+    datasource = pe.Node(interface=DataGrabber(infields=['subject_id'], outfields=['data']), name='datasource')
     datasource.inputs.base_directory = data_info['dir']
-    # datasource.inputs.template = 'searchlight_HR_HP_%02g_r10_seed0.nii'
     datasource.inputs.template = data_info['template']
     datasource.inputs.template_args = info
     datasource.inputs.sort_filelist = True
 
-    anatsource = pe.Node(interface=DataGrabber(infields=['subject_id'], outfields=['data']),
-                         name='anatsource')
+    anatsource = pe.Node(interface=DataGrabber(infields=['subject_id'], outfields=['data']), name='anatsource')
     anatsource.inputs.base_directory = anat_info['dir']
-    # datasource.inputs.template = 'searchlight_HR_HP_%02g_r10_seed0.nii'
     anatsource.inputs.template = anat_info['template']
     anatsource.inputs.template_args = info
     anatsource.inputs.sort_filelist = True
