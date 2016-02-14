@@ -373,15 +373,22 @@ def l2_one_sample_ttest(images, outputdir, explicit_mask=False, effect_name='eff
     wf.base_dir = os.path.dirname(os.path.normpath(workingdir))
 
     # create mask if it does not exist
-    if explicit_mask and not os.path.exists(os.path.join(outputdir, 'mask.nii')):
-        print("Creating mask file% s" % os.path.join(outputdir, 'mask.nii'))
-        from nilearn.masking import compute_multi_epi_mask, compute_background_mask
-        import nibabel
+    if explicit_mask is True:
+        if not os.path.exists(os.path.join(outputdir, 'mask.nii')):
+            print("Creating mask file% s" % os.path.join(outputdir, 'mask.nii'))
+            from nilearn.masking import compute_multi_epi_mask, compute_background_mask
+            import nibabel
 
-        mask = compute_multi_epi_mask(images)
-        # mask = compute_background_mask(images)
-        mask.set_data_dtype(float)
-        nibabel.save(mask, os.path.join(outputdir, 'mask.nii'))
+            mask = compute_multi_epi_mask(images)
+            # mask = compute_background_mask(images)
+            mask.set_data_dtype(float)
+            mask_path = os.path.join(outputdir, 'mask.nii')
+            nibabel.save(mask, mask_path)
+    elif isinstance(explicit_mask, str) and os.path.exists(explicit_mask):
+        mask_path = explicit_mask
+    elif explicit_mask is not None and explicit_mask is not False:
+        raise ValueError('Invalid value for explicit_mask!')
+
 
     # model design
     ttest_design = pe.Node(interface=spm.OneSampleTTestDesign(), name="ttest_design")
@@ -389,7 +396,7 @@ def l2_one_sample_ttest(images, outputdir, explicit_mask=False, effect_name='eff
     ttest_design.inputs.threshold_mask_none = True
     ttest_design.inputs.use_implicit_threshold = True
     if explicit_mask:
-        ttest_design.inputs.explicit_mask_file = os.path.join(outputdir, 'mask.nii')
+        ttest_design.inputs.explicit_mask_file = mask_path
     if covariates is not None:
         ttest_design.inputs.covariates = covariates
 
